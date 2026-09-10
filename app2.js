@@ -143,7 +143,9 @@
     
     function reviewMovement(event){
       event.preventDefault();
-      const data=readForm(); const error=validateMovement(data); if(error){setMovementStatus(error,true);return;}
+      const data=readForm(); 
+      data.movement = data.movement || "HSC London (Self)";
+      const error=validateMovement(data); if(error){setMovementStatus(error,true);return;}
       const item=state.inventory.find(x=>x.asset.toLowerCase()===data.asset.toLowerCase()); if(!item){setMovementStatus("That asset is not present in Inventory.",true);return;}
       if(data.movement!=="RECEIVED"&&data.quantity>item.balance){setMovementStatus(`Cannot remove ${data.quantity}. Current ${item.asset} balance is ${formatNumber(item.balance)}.`,true);return;}
       pendingMovement={...data,item,newBalance:data.movement==="RECEIVED"?item.balance+data.quantity:item.balance-data.quantity};
@@ -166,7 +168,9 @@
   
     function closeConfirm(){$("confirm-modal").classList.add("hidden");pendingMovement=null;$("approve-confirm").disabled=false;$("cancel-confirm").disabled=false;}
     function readForm(){return{movement:$("movement").value,client:$("client").value.trim(),asset:$("asset").value,quantity:Number($("quantity").value),timestamp:$("timestamp").value};}
-    function validateMovement(d){if(!d.movement||!d.client||!d.asset||!d.timestamp||!Number.isInteger(d.quantity)||d.quantity<=0)return"Please complete all fields and enter a whole quantity greater than zero.";return null;}
+    function validateMovement(d){
+      if(!d.movement||!d.asset||!d.timestamp||!Number.isInteger(d.quantity)||d.quantity<=0)
+        return"Please complete all fields and enter a whole quantity greater than zero.";return null;}
     function updatePreview(){const d=readForm();if(!d.movement||!d.client||!d.asset||!Number.isInteger(d.quantity)||d.quantity<=0){$("preview-text").textContent="Select the movement, client, asset and quantity.";return;}$("preview-text").textContent=`${movementLabel(d.movement)} ${formatNumber(d.quantity)} × ${d.asset} ${d.client?`for ${d.client}`:""}`;}
     function setDefaultTimestamp(){const now=new Date();$("timestamp").value=`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;}
     function movementLabel(x){return x==="RECEIVED"?"Received":x==="SENT"?"Sent":"Discard";}
