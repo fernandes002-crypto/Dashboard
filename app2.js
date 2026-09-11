@@ -60,14 +60,18 @@
       if(!state.accessToken)return;
       setSyncStatus("Syncing with Google Sheets...");
       try{
-        const workbook=await findWorkbook(CONFIG.WORKBOOK_NAME); if(!workbook)throw new Error(`Workbook "${CONFIG.WORKBOOK_NAME}" was not found in your Google Drive.`);
+        // Main tracker workbook: READ ONLY. Try the primary name first, then the fallback.
+        const workbook=await findMainWorkbook(); if(!workbook)throw new Error(`Workbook "${CONFIG.PRIMARY_WORKBOOK_NAME}" (or "${CONFIG.FALLBACK_WORKBOOK_NAME}") was not found in your Google Drive.`);
         state.workbookId=workbook.id; state.workbookName=workbook.name; $("workbook-name").textContent=workbook.name;
-        const metadata=await sheetsGet(`/${encodeURIComponent(state.workbookId)}`);
+
+        // Assets Inventory Ledger: the read/write source for inventory + transactions. Opened directly by ID.
+        const ledgerId=CONFIG.INVENTORY_LEDGER_SHEET_ID;
+        const metadata=await sheetsGet(`/${encodeURIComponent(ledgerId)}`);
         let titles=(metadata.sheets||[]).map(s=>s.properties.title); const missing=[];
         if(!titles.includes(CONFIG.INVENTORY_SHEET_NAME))missing.push(CONFIG.INVENTORY_SHEET_NAME);
         if(!titles.includes(CONFIG.TRANSACTIONS_SHEET_NAME))missing.push(CONFIG.TRANSACTIONS_SHEET_NAME);
         if(missing.length)await createSheets(missing);
-        const [inventoryRows,transactionRows,mainRows]=await Promise.all([getValues(CONFIG.INVENTORY_SHEET_NAME),getValues(CONFIG.TRANSACTIONS_SHEET_NAME),getValues(CONFIG.MAIN_SHEET_NAME)]);
+        const [inventoryRows,transactionRows,mainRows]=await Promise.all([getValues(ledgerId,CONFIG.INVENTORY_SHEET_NAME),getValues(ledgerId,CONFIG.TRANSACTIONS_SHEET_NAME),getValues(state.workbookId,CONFIG.MAIN_SHEET_NAME)]);
         state.inventory=parseInventory(inventoryRows); state.transactions=parseTransactions(transactionRows); state.clients=parseClients(mainRows);
         renderInputs(); renderAudit(); setSyncStatus(`Synced at ${new Date().toLocaleTimeString()}`);
       }catch(e){console.error(e);setSyncStatus(e.message||"Unable to load spreadsheet.",true);}
@@ -78,15 +82,22 @@
       const data=await fetchJson(`${DRIVE_API}?q=${encodeURIComponent(query)}&pageSize=10&fields=files(id,name,mimeType,modifiedTime,webViewLink)`,{headers:authHeaders()});
       return data.files?.[0]||null;
     }
-  
-    async function createSheets(names){
-      await sheetsPost(`/${encodeURIComponent(state.workbookId)}:batchUpdate`,{requests:names.map(title=>({addSheet:{properties:{title}}}))});
-      if(names.includes(CONFIG.INVENTORY_SHEET_NAME))await updateValues(CONFIG.INVENTORY_SHEET_NAME,[["Asset","Balance"]]);
-      if(names.includes(CONFIG.TRANSACTIONS_SHEET_NAME))await updateValues(CONFIG.TRANSACTIONS_SHEET_NAME,[["Timestamp","Client","Movement","Asset","Quantity","User"]]);
+
+    // Looks for the primary tracker name first, falling back to the legacy "Copy of..." name.
+    async function findMainWorkbook(){
+      return (await findWorkbook(CONFIG.PRIMARY_WORKBOOK_NAME)) || (await findWorkbook(CONFIG.FALLBACK_WORKBOOK_NAME));
     }
   
-    async function getValues(sheetName){const data=await sheetsGet(`/${encodeURIComponent(state.workbookId)}/values/${encodeURIComponent(quoteSheetName(sheetName)+"!A:AE")}`);return data.values||[];}
-    async function updateValues(sheetName,rows){const range=`${quoteSheetName(sheetName)}!A1`;return sheetsPut(`/${encodeURIComponent(state.workbookId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,{range,majorDimension:"ROWS",values:rows});}
+    // Sheet-creation only ever targets the Ledger - the tracker workbook is never written to.
+    async function createSheets(names){
+      const ledgerId=CONFIG.INVENTORY_LEDGER_SHEET_ID;
+      await sheetsPost(`/${encodeURIComponent(ledgerId)}:batchUpdate`,{requests:names.map(title=>({addSheet:{properties:{title}}}))});
+      if(names.includes(CONFIG.INVENTORY_SHEET_NAME))await updateValues(ledgerId,CONFIG.INVENTORY_SHEET_NAME,[["Asset","Balance"]]);
+      if(names.includes(CONFIG.TRANSACTIONS_SHEET_NAME))await updateValues(ledgerId,CONFIG.TRANSACTIONS_SHEET_NAME,[["Timestamp","Client","Movement","Asset","Quantity","User"]]);
+    }
+  
+    async function getValues(spreadsheetId,sheetName){const data=await sheetsGet(`/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(quoteSheetName(sheetName)+"!A:AE")}`);return data.values||[];}
+    async function updateValues(spreadsheetId,sheetName,rows){const range=`${quoteSheetName(sheetName)}!A1`;return sheetsPut(`/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,{range,majorDimension:"ROWS",values:rows});}
   
     function parseInventory(rows){
       if(!rows.length)return[]; const header=rows[0].map(normalizeHeader); const assetIdx=findColumn(header,["asset","asset name","item","type"]); const balanceIdx=findColumn(header,["balance","current balance","stock","quantity"]); if(assetIdx<0)return[];
@@ -157,10 +168,11 @@
     async function approveMovement(){
       if(!pendingMovement)return; const data=pendingMovement; $("approve-confirm").disabled=true; $("cancel-confirm").disabled=true; setMovementStatus("Recording movement...");
       try{
+        const ledgerId=CONFIG.INVENTORY_LEDGER_SHEET_ID;
         const user=state.idTokenPayload?.email||state.idTokenPayload?.name||"Google user"; const transactionRange=`${quoteSheetName(CONFIG.TRANSACTIONS_SHEET_NAME)}!A:F`;
-        await sheetsPost(`/${encodeURIComponent(state.workbookId)}/values/${encodeURIComponent(transactionRange)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{values:[[new Date().toISOString(),data.client,data.movement,data.asset,data.quantity,user]]});
+        await sheetsPost(`/${encodeURIComponent(ledgerId)}/values/${encodeURIComponent(transactionRange)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{values:[[new Date().toISOString(),data.client,data.movement,data.asset,data.quantity,user]]});
         const balanceCell=columnLetter(data.item.balanceColumn)+data.item.rowNumber; const inventoryRange=`${quoteSheetName(CONFIG.INVENTORY_SHEET_NAME)}!${balanceCell}`;
-        await sheetsPut(`/${encodeURIComponent(state.workbookId)}/values/${encodeURIComponent(inventoryRange)}?valueInputOption=USER_ENTERED`,{range:inventoryRange,majorDimension:"ROWS",values:[[data.newBalance]]});
+        await sheetsPut(`/${encodeURIComponent(ledgerId)}/values/${encodeURIComponent(inventoryRange)}?valueInputOption=USER_ENTERED`,{range:inventoryRange,majorDimension:"ROWS",values:[[data.newBalance]]});
         closeConfirm(); $("movement-form").reset(); setDefaultTimestamp(); setMovementStatus("Movement recorded successfully."); pendingMovement=null; await loadLogger();
       }catch(e){console.error(e);setMovementStatus(e.message||"Unable to record movement.",true);}
       finally{$("approve-confirm").disabled=false;$("cancel-confirm").disabled=false;}
