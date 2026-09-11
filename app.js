@@ -512,16 +512,16 @@
 
         try {
 
+            // Main tracker workbook: READ ONLY. Tries the primary name
+            // first, then falls back to the legacy "Copy of..." name.
             const workbook =
-                await findWorkbook(
-                    CONFIG.WORKBOOK_NAME
-                );
+                await findMainWorkbook();
 
 
             if (!workbook) {
 
                 throw new Error(
-                    `Workbook "${CONFIG.WORKBOOK_NAME}" was not found in your Google Drive.`
+                    `Workbook "${CONFIG.PRIMARY_WORKBOOK_NAME}" (or "${CONFIG.FALLBACK_WORKBOOK_NAME}") was not found in your Google Drive.`
                 );
 
             }
@@ -540,10 +540,16 @@
                 workbook.name;
 
 
+            // Assets Inventory Ledger: the read/write source for
+            // inventory + transactions. Opened directly by ID.
+            const ledgerId =
+                CONFIG.INVENTORY_LEDGER_SHEET_ID;
+
+
             const metadata =
                 await sheetsGet(
                     `/${encodeURIComponent(
-                        state.workbookId
+                        ledgerId
                     )}`
                 );
 
@@ -610,14 +616,17 @@
             ] = await Promise.all([
 
                 getValues(
+                    ledgerId,
                     CONFIG.INVENTORY_SHEET_NAME
                 ),
 
                 getValues(
+                    ledgerId,
                     CONFIG.TRANSACTIONS_SHEET_NAME
                 ),
 
                 getValues(
+                    state.workbookId,
                     CONFIG.MAIN_SHEET_NAME
                 )
 
@@ -709,9 +718,32 @@
     }
 
 
+    // Looks for the primary tracker name first, falling back to the
+    // legacy "Copy of..." name. Read-only - never written to.
+    async function findMainWorkbook() {
+
+        return (
+            await findWorkbook(
+                CONFIG.PRIMARY_WORKBOOK_NAME
+            )
+        ) || (
+            await findWorkbook(
+                CONFIG.FALLBACK_WORKBOOK_NAME
+            )
+        );
+
+    }
+
+
+    // Sheet-creation only ever targets the Assets Inventory Ledger -
+    // the tracker workbook is never written to.
     async function createSheets(
         names
     ) {
+
+        const ledgerId =
+            CONFIG.INVENTORY_LEDGER_SHEET_ID;
+
 
         const requests =
             names.map(
@@ -734,7 +766,7 @@
         await sheetsPost(
 
             `/${encodeURIComponent(
-                state.workbookId
+                ledgerId
             )}:batchUpdate`,
 
             {
@@ -751,6 +783,8 @@
         ) {
 
             await updateValues(
+
+                ledgerId,
 
                 CONFIG.INVENTORY_SHEET_NAME,
 
@@ -774,6 +808,8 @@
 
             await updateValues(
 
+                ledgerId,
+
                 CONFIG.TRANSACTIONS_SHEET_NAME,
 
                 [
@@ -795,6 +831,7 @@
 
 
     async function getValues(
+        spreadsheetId,
         sheetName
     ) {
 
@@ -808,7 +845,7 @@
             await sheetsGet(
 
                 `/${encodeURIComponent(
-                    state.workbookId
+                    spreadsheetId
                 )}/values/${encodeURIComponent(
                     range
                 )}`
@@ -822,6 +859,7 @@
 
 
     async function updateValues(
+        spreadsheetId,
         sheetName,
         rows
     ) {
@@ -835,7 +873,7 @@
         return sheetsPut(
 
             `/${encodeURIComponent(
-                state.workbookId
+                spreadsheetId
             )}/values/${encodeURIComponent(
                 range
             )}?valueInputOption=USER_ENTERED`,
@@ -3247,6 +3285,10 @@
             );
 
 
+            const ledgerId =
+                CONFIG.INVENTORY_LEDGER_SHEET_ID;
+
+
             const transactionRange =
                 `${quoteSheetName(
                     CONFIG.TRANSACTIONS_SHEET_NAME
@@ -3256,7 +3298,7 @@
             await sheetsPost(
 
                 `/${encodeURIComponent(
-                    state.workbookId
+                    ledgerId
                 )}/values/${encodeURIComponent(
                     transactionRange
                 )}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
@@ -3300,7 +3342,7 @@
             await sheetsPut(
 
                 `/${encodeURIComponent(
-                    state.workbookId
+                    ledgerId
                 )}/values/${encodeURIComponent(
                     inventoryRange
                 )}?valueInputOption=USER_ENTERED`,
@@ -3440,7 +3482,7 @@
             await sheetsPost(
 
                 `/${encodeURIComponent(
-                    state.workbookId
+                    CONFIG.INVENTORY_LEDGER_SHEET_ID
                 )}/values/${encodeURIComponent(
                     range
                 )}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
@@ -3541,7 +3583,7 @@
             const metadata =
                 await sheetsGet(
                     `/${encodeURIComponent(
-                        state.workbookId
+                        CONFIG.INVENTORY_LEDGER_SHEET_ID
                     )}`
                 );
 
@@ -3571,7 +3613,7 @@
             await sheetsPost(
 
                 `/${encodeURIComponent(
-                    state.workbookId
+                    CONFIG.INVENTORY_LEDGER_SHEET_ID
                 )}:batchUpdate`,
 
                 {
@@ -3725,7 +3767,7 @@
             await sheetsPut(
 
                 `/${encodeURIComponent(
-                    state.workbookId
+                    CONFIG.INVENTORY_LEDGER_SHEET_ID
                 )}/values/${encodeURIComponent(
                     range
                 )}?valueInputOption=USER_ENTERED`,
